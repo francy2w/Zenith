@@ -1,106 +1,152 @@
-<!DOCTYPE html>
+from flask import Flask, request, jsonify, render_template_string
+import random, string
+
+app = Flask(__name__)
+PORT = 5055
+
+keys_db = {}
+loadstrings_db = {}
+kill_switch_active = False
+
+HTML = """<!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Zenith Key System</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
-    <style>
-        :root {
-            --blue: #0066ff;
-            --dark: #0a0a0a;
-            --light: #ffffff;
-            --gray: #333333;
-            --green: #00cc66;
-            --red: #ff3333;
-        }
-        
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-            font-family: 'Segoe UI', sans-serif;
-        }
-        
-        body {
-            background: var(--dark);
-            color: var(--light);
-            min-height: 100vh;
-        }
-        
-        /* NAVBAR */
-        .navbar {
-            background: rgba(10, 10, 10, 0.95);
-            padding: 1rem 2rem;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            border-bottom: 2px solid var(--blue);
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-        }
-        
-        .logo {
-            display: flex;
-            align-items: center;
-            gap: 10px;
-            font-size: 1.8rem;
-            font-weight: bold;
-            color: var(--blue);
-        }
-        
-        /* HAMBURGER MENU */
-        .menu-btn {
-            display: none;
-            flex-direction: column;
-            cursor: pointer;
-            gap: 4px;
-            padding: 10px;
-        }
-        
-        .menu-btn span {
-            width: 25px;
-            height: 3px;
-            background: var(--blue);
-            border-radius: 2px;
-        }
-        
-        .nav-links {
-            display: flex;
-            gap: 1.5rem;
-            align-items: center;
-        }
-        
-        .nav-links a {
-            color: var(--light);
-            text-decoration: none;
-            padding: 0.5rem 1rem;
-            border-radius: 6px;
-            transition: 0.3s;
-        }
-        
-        .nav-links a:hover {
-            background: var(--blue);
-        }
-        
-        /* SIDEBAR */
-        .sidebar {
-            position: fixed;
-            top: 0;
-            right: -300px;
-            width: 280px;
-            height: 100vh;
-            background: var(--dark);
-            border-left: 1px solid var(--gray);
-            padding: 2rem;
-            transition: 0.3s;
-            z-index: 2000;
-        }
-        
-        .sidebar.active {
-            right: 0;
-        }
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Zenith Key System</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+<style>
+body { background:#0a0a0a;color:#fff;font-family:'Segoe UI',sans-serif; }
+.navbar{background:rgba(10,10,10,.95);padding:1rem 2rem;display:flex;justify-content:space-between;align-items:center;border-bottom:2px solid #0066ff;}
+.nav-links a{color:#fff;text-decoration:none;padding:.5rem 1rem;border-radius:6px;}
+.nav-links a:hover{background:#0066ff;}
+.container{max-width:1200px;margin:0 auto;padding:2rem;}
+.page-content{display:none;}
+.page-content.active{display:block;}
+.output, .code-output{background:#111;padding:1rem;border-radius:6px;font-family:'Consolas',monospace;overflow:auto;}
+.btn{padding:.7rem 1.5rem;border:none;border-radius:6px;color:#fff;cursor:pointer;margin-top:.5rem;}
+.btn-blue{background:#0066ff;}
+.btn-green{background:#00cc66;}
+.btn-red{background:#ff3333;}
+</style>
+</head>
+<body>
+<nav class="navbar">
+<div class="logo"><i class="fas fa-crown"></i> ZENITH</div>
+<div class="nav-links">
+<a href="#" onclick="showPage('home')">Home</a>
+<a href="#" onclick="showPage('keygen')">Key Generator</a>
+<a href="#" onclick="showPage('obfuscator')">Obfuscator</a>
+<a href="#" onclick="showPage('loadstring')">Loadstring</a>
+<a href="#" onclick="showPage('export')">Export</a>
+</div>
+</nav>
+<div class="container">
+<div id="home" class="page-content active">
+<h1 style="color:#0066ff;">ZENITH KEY SYSTEM</h1>
+<div class="output">
+Total Keys: <span id="totalKeys">0</span><br>
+Active: <span id="activeKeys">0</span><br>
+Loadstrings: <span id="loadstringCount">0</span>
+</div>
+</div>
+<div id="keygen" class="page-content">
+<h1 style="color:#0066ff;">Key Generator</h1>
+Amount: <input type="number" id="amount" value="10"><br>
+Type: 
+<select id="keyType">
+<option value="lifetime">Lifetime</option>
+<option value="day">Day-Locked</option>
+</select><br>
+<div id="daysBox" style="display:none;">Days: <input type="number" id="days" value="30"></div>
+<button class="btn btn-blue" onclick="generateKeys()">Generate Keys</button>
+<div class="output" id="keyOutput">Keys will appear here</div>
+Key to check: <input type="text" id="checkKey">
+<button class="btn btn-green" onclick="checkKey()">Verify Key</button>
+<div class="output" id="checkResult"></div>
+</div>
+<div id="obfuscator" class="page-content">
+<h1 style="color:#0066ff;">Obfuscator</h1>
+<textarea id="luaCode" placeholder="-- Lua code" style="width:100%;height:150px;"></textarea><br>
+<button class="btn btn-blue" onclick="obfuscateCode()">Obfuscate</button>
+<div class="code-output" id="obfResult">-- Obfuscated code here</div>
+</div>
+<div id="loadstring" class="page-content">
+<h1 style="color:#0066ff;">Loadstring Protection</h1>
+<textarea id="loadstringCode" placeholder="-- Lua code to protect" style="width:100%;height:150px;"></textarea><br>
+<button class="btn btn-blue" onclick="createLoadstring()">Create Loadstring</button>
+<div class="output" id="loadstringOutput"></div>
+</div>
+<div id="export" class="page-content">
+<h1 style="color:#0066ff;">Export Keys</h1>
+<button class="btn btn-blue" onclick="exportKeys('txt')">TXT</button>
+<button class="btn btn-blue" onclick="exportKeys('json')">JSON</button>
+<button class="btn btn-blue" onclick="exportKeys('csv')">CSV</button>
+<div class="output" id="exportInfo">Select format to export</div>
+</div>
+</div>
+<script>
+function showPage(page){document.querySelectorAll('.page-content').forEach(p=>p.style.display='none');document.getElementById(page).style.display='block';}
+document.getElementById('keyType').addEventListener('change', function(){document.getElementById('daysBox').style.display=this.value==='day'?'block':'none';});
+async function loadStats(){let res=await fetch('/api/stats');let data=await res.json();document.getElementById('totalKeys').textContent=data.total;document.getElementById('activeKeys').textContent=data.active;document.getElementById('loadstringCount').textContent=data.loadstrings||0;}
+async function generateKeys(){let amount=document.getElementById('amount').value;let type=document.getElementById('keyType').value;let days=type==='day'?document.getElementById('days').value:null;let res=await fetch('/api/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({amount,type,days})});let data=await res.json();document.getElementById('keyOutput').innerHTML=data.keys.map(k=>`<div>${k}</div>`).join('');loadStats();alert(`Generated ${data.keys.length} keys`);}
+async function checkKey(){let key=document.getElementById('checkKey').value;let res=await fetch(`/api/check/${key}`);let data=await res.json();let result=document.getElementById('checkResult');if(data.valid){result.innerHTML='<div style="color:#00cc66">✅ Valid ('+data.type+')</div>'}else{result.innerHTML='<div style="color:#ff3333">❌ '+data.error+'</div>'}}
+async function obfuscateCode(){let code=document.getElementById('luaCode').value;let res=await fetch('/api/obfuscate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});let data=await res.json();if(data.success){document.getElementById('obfResult').textContent=data.obfuscated;alert('Code obfuscated');}}
+async function createLoadstring(){let code=document.getElementById('loadstringCode').value;if(!code || code.length<10){alert('Enter valid code');return;}let res=await fetch('/api/loadstring/create',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code})});let data=await res.json();if(data.success){document.getElementById('loadstringOutput').innerHTML=`Loadstring ID: ${data.loadstring_id}<br>Access Key: ${data.access_key}<br><pre>${data.loadstring_code}</pre>`;loadStats();}}
+function exportKeys(format){window.open(`/api/export/${format}`,'_blank');document.getElementById('exportInfo').innerHTML=`Exporting ${format}`;}
+document.addEventListener('DOMContentLoaded',()=>{loadStats();showPage('home');setInterval(loadStats,5000);});
+</script>
+</body>
+</html>
+"""
+
+@app.route('/api/stats')
+def stats():
+    return jsonify({"total": len(keys_db), "active": sum(1 for k in keys_db.values() if k.get("active")), "loadstrings": len(loadstrings_db)})
+
+@app.route('/api/generate', methods=['POST'])
+def generate():
+    data = request.json
+    amount = int(data.get('amount', 10))
+    type_ = data.get('type', 'lifetime')
+    days = int(data.get('days', 30)) if data.get('days') else None
+    new_keys = []
+    for _ in range(amount):
+        key = ''.join(random.choices(string.ascii_uppercase+string.digits, k=10))
+        keys_db[key] = {"type": type_, "days": days, "active": True}
+        new_keys.append(key)
+    return jsonify({"success": True, "keys": new_keys})
+
+@app.route('/api/check/<key>')
+def check(key):
+    if key in keys_db:
+        return jsonify({"valid": True, "type": keys_db[key]["type"]})
+    return jsonify({"valid": False, "error": "Key not found"})
+
+@app.route('/api/obfuscate', methods=['POST'])
+def obfuscate():
+    code = request.json.get('code', '')
+    obf = ''.join(random.choice(string.ascii_letters) for _ in range(len(code)))
+    return jsonify({"success": True, "obfuscated": obf})
+
+@app.route('/api/loadstring/create', methods=['POST'])
+def create_loadstring():
+    code = request.json.get('code', '')
+    ls_id = ''.join(random.choices(string.ascii_uppercase+string.digits, k=6))
+    access_key = ''.join(random.choices(string.ascii_uppercase+string.digits, k=8))
+    loadstrings_db[ls_id] = {"code": code, "access_key": access_key}
+    return jsonify({"success": True, "loadstring_id": ls_id, "access_key": access_key, "loadstring_code": f"loadstring('{code}')()"})
+
+@app.route('/api/export/<fmt>')
+def export(fmt):
+    return jsonify({"format": fmt, "keys": list(keys_db.keys())})
+
+@app.route('/')
+def index():
+    return render_template_string(HTML, port=PORT)
+
+if __name__ == '__main__':
+    app.run(host='0.0.0.0', port=PORT)        }
         
         .sidebar-header {
             display: flex;
