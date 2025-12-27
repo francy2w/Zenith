@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 import os, sys
 
 app = Flask(__name__)
-PORT = 5055 if len(sys.argv) < 2 else int(sys.argv[1])
+PORT = int(os.environ.get("PORT", 5055))
 
 # ==================== DATABASE ====================
 class ZenithDatabase:
