@@ -1,257 +1,184 @@
 from flask import Flask, request, jsonify, send_file, render_template
-import sqlite3, json, secrets, base64, random, string, hashlib, zlib
+import sqlite3, json, secrets, base64, random, string, hashlib, zlib, re
 from datetime import datetime, timedelta
 import os
 
 app = Flask(__name__)
 PORT = int(os.environ.get("PORT", 5000))
 
-# ================= ZENITH BALANCED OBFUSCATOR =================
-class ZenithBalancedObfuscator:
+# ================= ZENITH BYTECODE OBFUSCATOR =================
+class ZenithBytecodeObfuscator:
     def __init__(self):
-        self.obf_levels = {
-            'light': 1,    # Solo protección básica
-            'medium': 2,   # Protección + ofuscación
-            'heavy': 3,    # Máxima protección (recomendado)
-            'extreme': 4   # Solo para código crítico
-        }
+        pass
     
     def random_name(self):
-        """Nombres legibles pero aleatorios"""
-        prefixes = ['_Z', '_X', '_Y', '_A', '_B']
-        return random.choice(prefixes) + secrets.token_hex(3).upper()
+        """Genera nombres de variables aleatorios"""
+        chars = string.ascii_letters + string.digits
+        return '_' + ''.join(random.choice(chars) for _ in range(8))
     
-    def create_simple_obfuscation(self, code):
-        """Ofuscación ligera que mantiene legibilidad"""
-        # Header Zenith
-        result = "--obfuscated by zenith\n--much love Francy\n\n"
-        
-        # Solo proteger strings importantes
-        strings = re.findall(r'"(?:\\.|[^"\\]){3,}"', code)  # Strings de 3+ chars
-        string_map = {}
-        
-        for s in strings:
-            var_name = self.random_name()
-            # Encriptación simple pero efectiva
-            encoded = base64.b64encode(s.encode()).decode()
-            string_map[var_name] = encoded
-            code = code.replace(s, var_name)
-        
-        # Añadir tabla de strings
-        if string_map:
-            result += "-- Protected strings\n"
-            for var_name, encoded in string_map.items():
-                result += f'local {var_name} = game:GetService("HttpService"):Base64Decode("{encoded}")\n'
-            result += "\n"
-        
-        # Código principal
-        result += code
-        return result
+    def string_to_octal(self, s):
+        """Convierte string a octal escaped"""
+        return ''.join(f'\\{ord(c):03o}' for c in s)
     
-    def create_balanced_obfuscation(self, code):
-        """Balance perfecto entre protección y legibilidad"""
-        result = "--obfuscated by zenith\n--much love Francy\n\n"
+    def obfuscate_code(self, code):
+        """
+        Obfuscador con bytecode VM estilo profesional
+        """
         
-        # Generar clave única
-        xor_key = random.randint(100, 200)
+        # Generar nombres únicos
+        bytecode_var = self.random_name()
+        flat_array_var = self.random_name()
+        xor_key_var = self.random_name()
+        xor_func_var = self.random_name()
+        vm_func_var = self.random_name()
+        pc_var = self.random_name()
+        buffer_var = self.random_name()
+        running_var = self.random_name()
+        stack_var = self.random_name()
+        env_var = self.random_name()
+        anti_func_var = self.random_name()
+        op_table_var = self.random_name()
         
-        # Convertir a bytes y aplicar XOR simple
+        # Generar clave XOR aleatoria
+        xor_key = random.randint(100, 250)
+        
+        # Convertir código a bytes y aplicar XOR
         code_bytes = code.encode('utf-8')
         encrypted_bytes = [byte ^ xor_key for byte in code_bytes]
         
-        # Crear array compacto
-        byte_array = []
-        chunk = []
-        for byte in encrypted_bytes:
-            chunk.append(str(byte))
-            if len(chunk) >= 15:
-                byte_array.append('{' + ','.join(chunk) + '}')
-                chunk = []
-        
-        if chunk:
-            byte_array.append('{' + ','.join(chunk) + '}')
-        
-        # VM simple pero efectiva
-        vm_vars = {
-            'data': self.random_name(),
-            'key': self.random_name(),
-            'result': self.random_name()
+        # Crear bytecode con instrucciones
+        opcodes = {
+            'PUSH': 48,    # Push valor al stack
+            'CHAR': 53,    # Convertir byte a char
+            'LOAD': 50,    # Cargar y ejecutar
+            'END': 51,     # Terminar ejecución
+            'SKIP': 52     # Saltar instrucción
         }
         
-        result += f"""local {vm_vars['data']} = {{
-    {',\n    '.join(byte_array)}
-}}
+        # Construir bytecode array
+        bytecode_chunks = []
+        current_chunk = []
+        
+        for byte in encrypted_bytes:
+            # Instrucción PUSH seguida del byte
+            current_chunk.append(opcodes['PUSH'])
+            current_chunk.append(byte)
+            
+            # Instrucción CHAR para convertir
+            current_chunk.append(opcodes['CHAR'])
+            
+            if len(current_chunk) >= 24:
+                bytecode_chunks.append(current_chunk)
+                current_chunk = []
+        
+        # Añadir instrucciones finales
+        current_chunk.append(opcodes['LOAD'])
+        current_chunk.append(opcodes['END'])
+        
+        if current_chunk:
+            bytecode_chunks.append(current_chunk)
+        
+        # Construir el código ofuscado SIN comentarios
+        obfuscated = f"local {bytecode_var} = {{{{{','.join([','.join(map(str, chunk)) for chunk in bytecode_chunks])}}}}}\n"
+        obfuscated += f"local {flat_array_var} = {{}}\n"
+        obfuscated += f"for _, c in ipairs({bytecode_var}) do\n"
+        obfuscated += f"    for _, b in ipairs(c) do\n"
+        obfuscated += f"        table.insert({flat_array_var}, b)\n"
+        obfuscated += f"    end\n"
+        obfuscated += f"end\n"
+        
+        obfuscated += f"local {xor_key_var} = {xor_key}\n"
+        
+        # Función XOR personalizada
+        obfuscated += f"local function {xor_func_var}(a, b)\n"
+        obfuscated += f"    local r, p = 0, 1\n"
+        obfuscated += f"    while a > 0 or b > 0 do\n"
+        obfuscated += f"        if (a % 2) ~= (b % 2) then\n"
+        obfuscated += f"            r = r + p\n"
+        obfuscated += f"        end\n"
+        obfuscated += f"        a, b, p = math.floor(a / 2), math.floor(b / 2), p * 2\n"
+        obfuscated += f"    end\n"
+        obfuscated += f"    return r\n"
+        obfuscated += f"end\n"
+        
+        # Función anti-debug
+        debug_strings = [
+            self.string_to_octal("hookfunction"),
+            self.string_to_octal("getgc"),
+            self.string_to_octal("debug"),
+            self.string_to_octal("setreadonly")
+        ]
+        
+        obfuscated += f"local function {anti_func_var}()\n"
+        obfuscated += f"    local _b = {{{','.join(['"' + s + '"' for s in debug_strings])}}}\n"
+        obfuscated += f"    for _, n in ipairs(_b) do\n"
+        obfuscated += f"        local _n = \"\"\n"
+        obfuscated += f"        for _c in n:gmatch(\"\\\\(%d+)\") do\n"
+        obfuscated += f"            _n = _n .. string.char(tonumber(_c))\n"
+        obfuscated += f"        end\n"
+        obfuscated += f"        local {env_var} = (getfenv and getfenv()) or _G\n"
+        obfuscated += f"        if {env_var}[_n] or _G[_n] then\n"
+        obfuscated += f"            local _p = (getfenv and getfenv()[\"\\160\\164\\163\\170\\164\"]) or print\n"
+        obfuscated += f"            _p(\"\\125\\116\\103\\40\\167\\141\\163\\40\\150\\145\\162\\145\\40\\72\\51\")\n"
+        obfuscated += f"            {xor_key_var} = math.random(1, 10000)\n"
+        obfuscated += f"            while true do end\n"
+        obfuscated += f"        end\n"
+        obfuscated += f"    end\n"
+        obfuscated += f"end\n"
+        
+        # Función VM principal
+        obfuscated += f"local function {vm_func_var}()\n"
+        obfuscated += f"    local {pc_var}, {buffer_var}, {running_var} = 1, {{}}, true\n"
+        obfuscated += f"    local {stack_var} = {{}}\n"
+        obfuscated += f"    local {env_var} = (getfenv and getfenv()) or _G\n"
+        
+        # Tabla de opcodes
+        obfuscated += f"    local {op_table_var} = {{\n"
+        obfuscated += f"        [{opcodes['PUSH']}] = function()\n"
+        obfuscated += f"            table.insert({stack_var}, {flat_array_var}[{pc_var} + 1])\n"
+        obfuscated += f"            {pc_var} = {pc_var} + 2\n"
+        obfuscated += f"        end,\n"
+        obfuscated += f"        [{opcodes['CHAR']}] = function()\n"
+        obfuscated += f"            local a = table.remove({stack_var})\n"
+        obfuscated += f"            table.insert({buffer_var}, string.char({xor_func_var}(a, {xor_key_var})))\n"
+        obfuscated += f"            {pc_var} = {pc_var} + 1\n"
+        obfuscated += f"        end,\n"
+        obfuscated += f"        [{opcodes['LOAD']}] = function()\n"
+        obfuscated += f"            {anti_func_var}()\n"
+        obfuscated += f"            local _Ll5ax3 = {env_var}[\"\\154\\157\\141\\144\\163\\164\\162\\151\\156\\147\"] or load\n"
+        obfuscated += f"            local _SSycka8, _FF9rhas = pcall(_Ll5ax3, table.concat({buffer_var}))\n"
+        obfuscated += f"            if _SSycka8 and _FF9rhas then\n"
+        obfuscated += f"                local _env = getfenv and getfenv(0) or _G\n"
+        obfuscated += f"                setfenv(_FF9rhas, _env)\n"
+        obfuscated += f"                pcall(_FF9rhas)\n"
+        obfuscated += f"            end\n"
+        obfuscated += f"            {pc_var} = {pc_var} + 1\n"
+        obfuscated += f"        end,\n"
+        obfuscated += f"        [{opcodes['END']}] = function()\n"
+        obfuscated += f"            {running_var} = false\n"
+        obfuscated += f"        end,\n"
+        obfuscated += f"        [{opcodes['SKIP']}] = function()\n"
+        obfuscated += f"            {pc_var} = {pc_var} + 2\n"
+        obfuscated += f"        end\n"
+        obfuscated += f"    }}\n"
+        
+        obfuscated += f"    {anti_func_var}()\n"
+        obfuscated += f"    while {running_var} do\n"
+        obfuscated += f"        local c = {flat_array_var}[{pc_var}]\n"
+        obfuscated += f"        if not c then break end\n"
+        obfuscated += f"        if {op_table_var}[c] then\n"
+        obfuscated += f"            {op_table_var}[c]()\n"
+        obfuscated += f"        else\n"
+        obfuscated += f"            {pc_var} = {pc_var} + 1\n"
+        obfuscated += f"        end\n"
+        obfuscated += f"    end\n"
+        obfuscated += f"end\n"
+        
+        obfuscated += f"pcall({vm_func_var})"
+        
+        return obfuscated
 
-local {vm_vars['key']} = {xor_key}
-local {vm_vars['result']} = ""
-
-for _, chunk in ipairs({vm_vars['data']}) do
-    for _, byte in ipairs(chunk) do
-        {vm_vars['result']} = {vm_vars['result']} .. string.char(byte ~ {vm_vars['key']})
-    end
-end
-
-local func, err = loadstring({vm_vars['result']})
-if func then
-    func()
-else
-    error("Load error: " .. tostring(err))
-end
-"""
-        return result
-    
-    def create_advanced_obfuscation(self, code):
-        """Protección avanzada manteniendo compatibilidad"""
-        # Header
-        result = "--obfuscated by zenith\n--much love Francy\n--advanced protection\n\n"
-        
-        # Claves de encriptación
-        key1 = random.randint(50, 150)
-        key2 = random.randint(151, 250)
-        
-        # Proceso de encriptación en 2 pasos
-        step1 = []
-        for char in code:
-            step1.append(ord(char) ^ key1)
-        
-        step2 = []
-        for byte in step1:
-            step2.append(byte ^ key2)
-        
-        # Fragmentar en partes manejables
-        fragments = []
-        current = []
-        for byte in step2:
-            current.append(str(byte))
-            if len(current) >= 20:
-                fragments.append('{' + ','.join(current) + '}')
-                current = []
-        
-        if current:
-            fragments.append('{' + ','.join(current) + '}')
-        
-        # Generar VM optimizada
-        data_var = self.random_name()
-        result_var = self.random_name()
-        
-        result += f"""-- Initialization
-local {data_var} = {{{', '.join(fragments)}}}
-local {result_var} = ""
-local _k1, _k2 = {key1}, {key2}
-
--- Decryption process
-for _, chunk in ipairs({data_var}) do
-    for _, byte in ipairs(chunk) do
-        local b = tonumber(byte)
-        b = b ~ _k2  -- Second layer
-        b = b ~ _k1  -- First layer
-        {result_var} = {result_var} .. string.char(b)
-    end
-end
-
--- Quick integrity check
-if #{result_var} > 0 then
-    local success, loaded = pcall(loadstring, {result_var})
-    if success and loaded then
-        loaded()
-    else
-        warn("Execution failed")
-    end
-end
-"""
-        return result
-    
-    def create_extreme_obfuscation(self, code):
-        """Máxima protección manteniendo raw/loadstring funcional"""
-        # Header
-        result = "--obfuscated by zenith\n--much love Francy\n--extreme protection v2\n\n"
-        
-        # Comprimir el código
-        compressed = zlib.compress(code.encode(), level=9)
-        
-        # Encriptación multi-nivel pero simple
-        key = secrets.token_bytes(16)
-        encrypted = bytes(b ^ key[i % 16] for i, b in enumerate(compressed))
-        
-        # Convertir a array de números legible
-        byte_array = []
-        line = []
-        for i, byte in enumerate(encrypted):
-            line.append(str(byte))
-            if len(line) >= 12:
-                byte_array.append('    {' + ','.join(line) + '},')
-                line = []
-        
-        if line:
-            byte_array.append('    {' + ','.join(line) + '}')
-        
-        # Key en base64 para fácil manejo
-        key_b64 = base64.b64encode(key).decode()
-        
-        # VM optimizada para raw
-        result += f"""-- Data block
-local _Z_DATA = {{
-{chr(10).join(byte_array)}
-}}
-
--- Decryption key
-local _Z_KEY = game:GetService("HttpService"):Base64Decode("{key_b64}")
-
--- Reconstruct bytes
-local _Z_BYTES = {{}}
-for _, chunk in ipairs(_Z_DATA) do
-    for _, byte in ipairs(chunk) do
-        table.insert(_Z_BYTES, byte)
-    end
-end
-
--- Decrypt
-local _Z_DECRYPTED = ""
-for i, byte in ipairs(_Z_BYTES) do
-    local key_byte = string.byte(_Z_KEY, (i-1) % 16 + 1)
-    _Z_DECRYPTED = _Z_DECRYPTED .. string.char(byte ~ key_byte)
-end
-
--- Decompress and execute
-local _Z_SUCCESS, _Z_DECOMPRESSED = pcall(function()
-    return game:GetService("HttpService"):JSONDecode(_Z_DECRYPTED)
-end)
-
-if not _Z_SUCCESS then
-    -- Fallback to direct execution
-    _Z_DECOMPRESSED = _Z_DECRYPTED
-end
-
--- Final execution (compatible with raw/loadstring)
-local _Z_FUNC, _Z_ERR = loadstring(_Z_DECOMPRESSED, "=ZenithProtected")
-if _Z_FUNC then
-    pcall(_Z_FUNC)
-elseif _Z_ERR then
-    -- Try without chunkname
-    _Z_FUNC = loadstring(_Z_DECOMPRESSED)
-    if _Z_FUNC then
-        pcall(_Z_FUNC)
-    end
-end
-"""
-        return result
-    
-    def obfuscate(self, code, level='heavy'):
-        """Selector de nivel de ofuscación"""
-        if level == 'light':
-            return self.create_simple_obfuscation(code)
-        elif level == 'medium':
-            return self.create_balanced_obfuscation(code)
-        elif level == 'heavy':
-            return self.create_advanced_obfuscation(code)
-        elif level == 'extreme':
-            return self.create_extreme_obfuscation(code)
-        else:
-            # Por defecto, balanced
-            return self.create_balanced_obfuscation(code)
-
-# Configurar obfuscator
-zenith_obfuscator = ZenithBalancedObfuscator()
+obfuscator = ZenithBytecodeObfuscator()
 
 # ================= DATABASE =================
 class ZenithDatabase:
@@ -421,22 +348,12 @@ def export(fmt):
 @app.route("/api/obfuscate", methods=["POST"])
 def obf():
     code = request.json.get("code","")
-    level = request.json.get("level", "heavy")  # light, medium, heavy, extreme
-    
     if not code or len(code)<5:
         return jsonify({"success": False, "error": "Code too short"})
     
-    try:
-        obfuscated = zenith_obfuscator.obfuscate(code, level)
-        return jsonify({
-            "success": True, 
-            "obfuscated": obfuscated,
-            "level": level,
-            "size_original": len(code),
-            "size_obfuscated": len(obfuscated)
-        })
-    except Exception as e:
-        return jsonify({"success": False, "error": str(e)})
+    # Usar el obfuscador de bytecode
+    obfuscated = obfuscator.obfuscate_code(code)
+    return jsonify({"success": True, "obfuscated": obfuscated})
 
 @app.route("/api/loadstring/create", methods=["POST"])
 def ls_create():
@@ -447,14 +364,63 @@ def ls_create():
 
 # ================= RUN SERVER =================
 if __name__ == "__main__":
+    # Crear directorio de templates si no existe
+    if not os.path.exists("templates"):
+        os.makedirs("templates")
+    
+    # Crear template HTML básico
+    with open("templates/index.html", "w") as f:
+        f.write("""<!DOCTYPE html>
+<html>
+<head>
+    <title>Zenith Obfuscator</title>
+    <style>
+        body { font-family: Arial; margin: 40px; background: #0a0a0a; color: white; }
+        .container { max-width: 800px; margin: 0 auto; }
+        textarea { width: 100%; height: 200px; background: #111; color: #0f0; border: 1px solid #00f; padding: 10px; }
+        button { background: #0066ff; color: white; border: none; padding: 10px 20px; cursor: pointer; margin: 10px 0; }
+        .code-output { background: #111; color: #0f0; padding: 15px; margin-top: 10px; border: 1px solid #00f; position: relative; }
+        .copy-btn { position: absolute; top: 10px; right: 10px; background: #0066ff; color: white; border: none; padding: 5px 10px; cursor: pointer; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Zenith Obfuscator</h1>
+        <textarea id="code" placeholder="Paste your Lua code here...">print("Hello Zenith")</textarea>
+        <button onclick="obfuscate()">Obfuscate with Zenith</button>
+        <div class="code-output" id="output">
+            <!-- Obfuscated code appears here -->
+            <button class="copy-btn" onclick="copyCode()">Copy</button>
+        </div>
+    </div>
+    <script>
+        async function obfuscate() {
+            const code = document.getElementById('code').value;
+            const res = await fetch('/api/obfuscate', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({code})
+            });
+            const data = await res.json();
+            if(data.success) {
+                const output = document.getElementById('output');
+                output.innerHTML = `<button class="copy-btn" onclick="copyCode()">Copy</button><pre>${data.obfuscated}</pre>`;
+            }
+        }
+        function copyCode() {
+            const code = document.querySelector('#output pre').innerText;
+            navigator.clipboard.writeText(code);
+            alert('Code copied!');
+        }
+    </script>
+</body>
+</html>""")
+    
     print(f"""
     ╔═══════════════════════════════════════════╗
-    ║        ZENITH OBFUSCATOR v3.0             ║
-    ║        Balanced Protection                ║
+    ║        ZENITH Web             ║
+    ║        Hello world                          ║
     ║        Much love Francy <3                ║
-    ║                                           ║
-    ║    Server: http://localhost:{PORT}          ║
-    ║    Levels: light, medium, heavy, extreme  ║
     ╚═══════════════════════════════════════════╝
     """)
     
