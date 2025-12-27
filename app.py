@@ -197,5 +197,4 @@ def ls_create():
 
 # ================= RUN SERVER =================
 if __name__ == "__main__":
-    os.makedirs("templates", exist_ok=True)
     app.run(host="0.0.0.0", port=PORT, debug=False)
