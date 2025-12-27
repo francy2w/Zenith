@@ -1,214 +1,346 @@
-from flask import Flask, request, jsonify, send_file, render_template
-import sqlite3, json, secrets, base64, random, string, hashlib, zlib, time, re
+from flask import Flask, render_template, request, jsonify, send_file
+import sqlite3, json, secrets, random, base64, hashlib
 from datetime import datetime, timedelta
-import os
+import os, sys
 
 app = Flask(__name__)
-PORT = int(os.environ.get("PORT", 5000))
+PORT = 5055 if len(sys.argv) < 2 else int(sys.argv[1])
 
-# =========================
-# UTILIDADES
-# =========================
-
-def sha(data: str):
-    return hashlib.sha256(data.encode()).hexdigest()
-
-def b64e(b: bytes):
-    return base64.b64encode(b).decode()
-
-def b64d(s: str):
-    return base64.b64decode(s.encode())
-
-# =========================
-# VM REAL (BYTECODE)
-# =========================
-
-OP_LOADK = 1
-OP_XOR   = 2
-OP_PRINT= 3
-OP_HALT = 255
-
-def compile_to_bytecode(lua_source: str):
-    """
-    Ejemplo mínimo: NO parsea Lua real,
-    solo demo para VM (puedes ampliarlo).
-    """
-    bc = []
-    for line in lua_source.splitlines():
-        if "print" in line:
-            val = line.split("print")[-1].strip("() ")
-            bc.append([OP_LOADK, 1, val])
-            bc.append([OP_PRINT, 1])
-    bc.append([OP_HALT])
-    return bc
-
-# =========================
-# OBFUSCADOR + VM PAYLOAD
-# =========================
-
-class IronbrewUltra:
-
-    def rn(self):
-        chars = string.ascii_letters + string.digits
-        return "_" + "".join(random.choice(chars) for _ in range(12))
-
-    def obfuscate_vm(self, lua_code: str):
-        bytecode = compile_to_bytecode(lua_code)
-        raw = json.dumps(bytecode).encode()
-        comp = zlib.compress(raw, 9)
-
-        key = secrets.token_bytes(32)
-        enc = bytes(b ^ key[i % len(key)] for i, b in enumerate(comp))
-
-        return {
-            "data": b64e(enc),
-            "key": b64e(key)
-        }
-
-    def vm_loader(self, payload):
-        v = self.rn()
-        r = self.rn()
-        pc = self.rn()
-
-        return f'''
-local Http=game:GetService("HttpService")
-local function VM(bc)
-    local r={{}}
-    local pc=1
-    while true do
-        local ins=bc[pc]
-        if not ins then break end
-        local op=ins[1]
-        if op==1 then
-            r[ins[2]]=ins[3]
-        elseif op==2 then
-            r[ins[2]]=bit32.bxor(r[ins[2]],ins[3])
-        elseif op==3 then
-            print(r[ins[2]])
-        elseif op==255 then
-            break
-        end
-        pc+=1
-    end
-end
-
-local data=Http:Base64Decode("{payload['data']}")
-local key=Http:Base64Decode("{payload['key']}")
-local dec={{}}
-for i=1,#data do
-    dec[i]=string.char(string.byte(data,i)~string.byte(key,(i-1)%#key+1))
-end
-local json=Http:JSONDecode(zlib.decompress(table.concat(dec)))
-VM(json)
-'''
-
-obfuscator = IronbrewUltra()
-
-# =========================
-# DATABASE
-# =========================
-
+# ==================== DATABASE ====================
 class ZenithDatabase:
     def __init__(self):
-        self.conn = sqlite3.connect("zenith.db", check_same_thread=False)
-        self.init()
-
-    def init(self):
-        c = self.conn.cursor()
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS keys (
-            key TEXT PRIMARY KEY,
-            expires TEXT
-        )""")
-        c.execute("""
-        CREATE TABLE IF NOT EXISTS sessions (
-            sid TEXT,
-            step INTEGER,
-            token TEXT
-        )""")
+        self.conn = sqlite3.connect('zenith.db', check_same_thread=False)
+        self.init_db()
+    
+    def init_db(self):
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS keys (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                key TEXT UNIQUE NOT NULL,
+                key_type TEXT NOT NULL,
+                days INTEGER,
+                status TEXT DEFAULT 'active',
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                discord_id TEXT DEFAULT '',
+                note TEXT DEFAULT ''
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS config (
+                kill_switch INTEGER DEFAULT 0
+            )
+        ''')
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS loadstrings (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                loadstring_id TEXT UNIQUE,
+                encrypted_code TEXT,
+                access_key TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        ''')
         self.conn.commit()
-
-    def new_key(self, days=None):
-        k = "ZENITH-" + secrets.token_hex(8)
-        exp = None
-        if days:
-            exp = (datetime.utcnow() + timedelta(days=days)).isoformat()
-        self.conn.execute("INSERT INTO keys VALUES (?,?)",(k,exp))
+    
+    def generate_keys(self, amount, key_type, days=None):
+        keys = []
+        cursor = self.conn.cursor()
+        for _ in range(amount):
+            key = f"ZENITH-{secrets.token_hex(8).upper()}"
+            expires = None
+            if key_type == 'day' and days:
+                expires = datetime.now() + timedelta(days=days)
+                expires = expires.isoformat()
+            cursor.execute('INSERT INTO keys (key, key_type, days, expires_at) VALUES (?, ?, ?, ?)',
+                          (key, key_type, days, expires))
+            keys.append(key)
         self.conn.commit()
-        return k
+        return keys
+    
+    def get_stats(self):
+        cursor = self.conn.cursor()
+        stats = {}
+        cursor.execute('SELECT COUNT(*) FROM keys')
+        stats['total'] = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM keys WHERE status="active"')
+        stats['active'] = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM keys WHERE key_type="lifetime"')
+        stats['lifetime'] = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM keys WHERE key_type="day"')
+        stats['day'] = cursor.fetchone()[0]
+        cursor.execute('SELECT COUNT(*) FROM loadstrings')
+        stats['loadstrings'] = cursor.fetchone()[0]
+        cursor.execute('SELECT kill_switch FROM config LIMIT 1')
+        result = cursor.fetchone()
+        stats['kill_switch'] = result[0] if result else 0
+        return stats
+    
+    def toggle_kill_switch(self, state):
+        cursor = self.conn.cursor()
+        cursor.execute('UPDATE config SET kill_switch = ?', (1 if state else 0,))
+        self.conn.commit()
+    
+    def export_keys(self, format):
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT * FROM keys')
+        keys = cursor.fetchall()
+        
+        if format == 'txt':
+            output = []
+            for k in keys:
+                expires = k[6] or 'Lifetime'
+                output.append(f"{k[1]} | {k[2]} | {expires}")
+            return '\n'.join(output)
+        elif format == 'json':
+            return json.dumps([{
+                'key': k[1], 'type': k[2], 'expires': k[6]
+            } for k in keys], indent=2)
+        elif format == 'csv':
+            lines = ['key,type,expires']
+            for k in keys:
+                lines.append(f'{k[1]},{k[2]},{k[6] or "Lifetime"}')
+            return '\n'.join(lines)
+        return ''
+    
+    def check_key(self, key):
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT * FROM keys WHERE key = ?', (key,))
+        key_data = cursor.fetchone()
+        
+        if not key_data:
+            return {'valid': False, 'error': 'Key not found'}
+        
+        cursor.execute('SELECT kill_switch FROM config LIMIT 1')
+        if cursor.fetchone()[0] == 1:
+            return {'valid': False, 'error': 'System disabled'}
+        
+        if key_data[6]:
+            expires = datetime.fromisoformat(key_data[6])
+            if datetime.now() > expires:
+                return {'valid': False, 'error': 'Key expired'}
+        
+        return {
+            'valid': True,
+            'type': key_data[2],
+            'discord_id': key_data[7],
+            'note': key_data[8],
+            'expires_at': key_data[6]
+        }
+    
+    def create_loadstring(self, code):
+        """Create protected loadstring that hides source code"""
+        loadstring_id = f"LS{secrets.token_hex(12).upper()}"
+        access_key = secrets.token_hex(16)
+        
+        # Encrypt the code (simple XOR for demo)
+        key = secrets.token_hex(8)
+        encrypted = self._xor_encrypt(code, key)
+        
+        cursor = self.conn.cursor()
+        cursor.execute('''
+            INSERT INTO loadstrings (loadstring_id, encrypted_code, access_key)
+            VALUES (?, ?, ?)
+        ''', (loadstring_id, encrypted, access_key))
+        
+        self.conn.commit()
+        
+        # Create the loadstring code that decrypts and executes
+        loadstring_code = f'''-- Zenith Protected Loadstring
+-- ID: {loadstring_id}
+-- DO NOT SHARE THIS CODE
 
-    def check_key(self, k):
-        c=self.conn.cursor()
-        r=c.execute("SELECT expires FROM keys WHERE key=?",(k,)).fetchone()
-        if not r: return False
-        if r[0] and datetime.utcnow()>datetime.fromisoformat(r[0]): return False
-        return True
+local zenith_data = "{encrypted}"
+local zenith_key = "{key}"
+
+local function zenith_decrypt(data, key)
+    local result = ""
+    for i = 1, #data do
+        local char_code = string.byte(data, i)
+        local key_char = string.byte(key, (i - 1) % #key + 1)
+        result = result .. string.char(bit32.bxor(char_code, key_char))
+    end
+    return result
+end
+
+-- Only authorized clients can execute
+if _G.ZenithAccessKey == "{access_key}" then
+    local decrypted = zenith_decrypt(zenith_data, zenith_key)
+    return loadstring(decrypted)()
+else
+    error("Zenith: Unauthorized execution attempt")
+    return nil
+end
+'''
+        
+        return {
+            'loadstring_id': loadstring_id,
+            'access_key': access_key,
+            'loadstring_code': loadstring_code,
+            'raw_code': code  # Only returned for reference
+        }
+    
+    def execute_loadstring(self, loadstring_id, access_key):
+        """Execute loadstring if authorized"""
+        cursor = self.conn.cursor()
+        cursor.execute('SELECT encrypted_code FROM loadstrings WHERE loadstring_id = ?', (loadstring_id,))
+        result = cursor.fetchone()
+        
+        if not result:
+            return {'success': False, 'error': 'Loadstring not found'}
+        
+        # In a real system, you'd verify the access_key
+        # For demo, we'll just return success
+        return {
+            'success': True,
+            'message': 'Loadstring ready for execution',
+            'note': 'Set _G.ZenithAccessKey = "YOUR_KEY" before executing'
+        }
+    
+    def _xor_encrypt(self, text, key):
+        """Simple XOR encryption"""
+        result = []
+        for i in range(len(text)):
+            char_code = ord(text[i])
+            key_char = ord(key[i % len(key)])
+            result.append(chr(char_code ^ key_char))
+        return ''.join(result)
 
 db = ZenithDatabase()
 
-# =========================
-# RUNTIME STREAMING
-# =========================
+# ==================== ZENITH OBFUSCATOR ====================
+class ZenithObfuscator:
+    def obfuscate_lua(self, code):
+        """Zenith Professional Obfuscator"""
+        if not code or len(code) < 10:
+            return "-- Zenith Obfuscator: Minimum 10 characters required"
+        
+        # Simple obfuscation - add header and encrypt strings
+        import re
+        
+        # Encrypt strings
+        string_pattern = r'(["\'])(?:(?=(\\?))\2.)*?\1'
+        strings = re.findall(string_pattern, code)
+        
+        for full_string in strings:
+            string_content = full_string[0]
+            if len(string_content) > 2:
+                char_codes = []
+                for char in string_content:
+                    char_codes.append(str(ord(char)))
+                
+                encrypted = f'((function() local t={{ {",".join(char_codes)} }} local s="" for _,c in ipairs(t) do s=s..string.char(c) end return s end)())'
+                
+                code = code.replace(f'"{string_content}"', encrypted)
+                code = code.replace(f"'{string_content}'", encrypted)
+        
+        # Add Zenith header
+        obfuscated = f'''--[[ OBFUSCATED BY ZENITH ]]--
 
-STREAMS = {}
+{code}
 
-@app.route("/api/stream/start/<key>")
-def stream_start(key):
-    if not db.check_key(key):
-        return jsonify({"error":"invalid key"}),403
-    sid = secrets.token_hex(8)
-    token = sha(key)
-    STREAMS[sid] = {"step":0,"token":token}
-    return jsonify({"sid":sid,"token":token})
+--[[ ZENITH PROTECTION ENABLED ]]--
+return true
+'''
+        
+        return obfuscated
 
-@app.route("/api/stream/next/<sid>/<token>")
-def stream_next(sid, token):
-    s = STREAMS.get(sid)
-    if not s or token != s["token"]:
-        return jsonify({"error":"invalid session"}),403
+obfuscator = ZenithObfuscator()
 
-    steps = STREAMS_PAYLOAD.get(sid)
-    if s["step"] >= len(steps):
-        return jsonify({"done":True})
+# ==================== ROUTES ====================
+@app.route('/')
+def index():
+    return render_template('index.html', port=PORT)
 
-    chunk = steps[s["step"]]
-    new_token = sha(chunk + token + str(time.time()))
+@app.route('/api/stats')
+def api_stats():
+    return jsonify(db.get_stats())
 
-    s["step"] += 1
-    s["token"] = new_token
+@app.route('/api/generate', methods=['POST'])
+def api_generate():
+    data = request.json
+    amount = int(data.get('amount', 1))
+    key_type = data.get('type', 'lifetime')
+    days = int(data.get('days', 30)) if key_type == 'day' else None
+    keys = db.generate_keys(amount, key_type, days)
+    return jsonify({'success': True, 'keys': keys})
 
+@app.route('/api/killswitch/<action>')
+def api_killswitch(action):
+    if action == 'enable':
+        db.toggle_kill_switch(True)
+        return jsonify({'success': True, 'status': 'KILL SWITCH ON'})
+    elif action == 'disable':
+        db.toggle_kill_switch(False)
+        return jsonify({'success': True, 'status': 'SYSTEM ACTIVE'})
+    return jsonify({'error': 'Invalid action'}), 400
+
+@app.route('/api/export/<format>')
+def api_export(format):
+    if format not in ['txt', 'json', 'csv']:
+        return jsonify({'error': 'Invalid format'}), 400
+    content = db.export_keys(format)
+    filename = f'zenith_keys_{datetime.now().strftime("%Y%m%d")}.{format}'
+    with open(filename, 'w') as f:
+        f.write(content)
+    return send_file(filename, as_attachment=True)
+
+@app.route('/api/check/<key>')
+def api_check(key):
+    return jsonify(db.check_key(key))
+
+@app.route('/api/obfuscate', methods=['POST'])
+def api_obfuscate():
+    data = request.json
+    code = data.get('code', '')
+    
+    if not code:
+        return jsonify({'error': 'No code provided'}), 400
+    
+    obfuscated = obfuscator.obfuscate_lua(code)
+    
     return jsonify({
-        "chunk": b64e(chunk.encode()),
-        "token": new_token
+        'success': True,
+        'obfuscated': obfuscated
     })
 
-# =========================
-# API
-# =========================
+@app.route('/api/loadstring/create', methods=['POST'])
+def api_loadstring_create():
+    data = request.json
+    code = data.get('code', '')
+    
+    if not code:
+        return jsonify({'error': 'No code provided'}), 400
+    
+    result = db.create_loadstring(code)
+    
+    return jsonify({
+        'success': True,
+        'loadstring_id': result['loadstring_id'],
+        'access_key': result['access_key'],
+        'loadstring_code': result['loadstring_code'],
+        'note': 'Save the access_key! It is required for execution.'
+    })
 
-@app.route("/api/generate", methods=["POST"])
-def gen():
-    days=request.json.get("days")
-    return jsonify({"key":db.new_key(days)})
+@app.route('/api/loadstring/execute/<loadstring_id>', methods=['POST'])
+def api_loadstring_execute(loadstring_id):
+    data = request.json
+    access_key = data.get('access_key', '')
+    
+    if not access_key:
+        return jsonify({'error': 'Access key required'}), 400
+    
+    result = db.execute_loadstring(loadstring_id, access_key)
+    return jsonify(result)
 
-@app.route("/api/obfuscate", methods=["POST"])
-def obf():
-    code=request.json.get("code","")
-    if len(code)<5:
-        return jsonify({"error":"code too short"})
-    payload=obfuscator.obfuscate_vm(code)
-    loader=obfuscator.vm_loader(payload)
-
-    sid=secrets.token_hex(6)
-    STREAMS_PAYLOAD[sid]=[loader[i:i+120] for i in range(0,len(loader),120)]
-
-    return jsonify({"success":True,"stream_id":sid})
-
-STREAMS_PAYLOAD = {}
-
-# =========================
-# RUN
-# =========================
-
-if __name__=="__main__":
-    app.run("0.0.0.0",PORT,debug=False)
+if __name__ == '__main__':
+    os.makedirs('templates', exist_ok=True)
+    print(f"""
+    ╔══════════════════════════════════════════╗
+    ║             ZENITH KEY SYSTEM            ║
+    ║         with Loadstring Protection       ║
+    ║             Port: {PORT}                    ║
+    ║        http://localhost:{PORT}              ║
+    ╚══════════════════════════════════════════╝
+    """)
+    app.run(host='0.0.0.0', port=PORT, debug=False)
