@@ -1,9 +1,9 @@
-from flask import Flask, render_template, request, jsonify, send_file
+from flask import Flask, render_template_string, request, jsonify, send_file
 import sqlite3, json, secrets, random, base64, hashlib
 from datetime import datetime, timedelta
 import os, sys
 
-app = Flask(__name__, template_folder='.')  # Busca templates en la misma carpeta
+app = Flask(__name__)
 PORT = 5055 if len(sys.argv) < 2 else int(sys.argv[1])
 
 # ==================== DATABASE ====================
@@ -93,9 +93,7 @@ class ZenithDatabase:
                 output.append(f"{k[1]} | {k[2]} | {expires}")
             return '\n'.join(output)
         elif format == 'json':
-            return json.dumps([{
-                'key': k[1], 'type': k[2], 'expires': k[6]
-            } for k in keys], indent=2)
+            return json.dumps([{'key': k[1], 'type': k[2], 'expires': k[6]} for k in keys], indent=2)
         elif format == 'csv':
             lines = ['key,type,expires']
             for k in keys:
@@ -120,13 +118,7 @@ class ZenithDatabase:
             if datetime.now() > expires:
                 return {'valid': False, 'error': 'Key expired'}
         
-        return {
-            'valid': True,
-            'type': key_data[2],
-            'discord_id': key_data[7],
-            'note': key_data[8],
-            'expires_at': key_data[6]
-        }
+        return {'valid': True, 'type': key_data[2], 'discord_id': key_data[7], 'note': key_data[8], 'expires_at': key_data[6]}
     
     def create_loadstring(self, code):
         loadstring_id = f"LS{secrets.token_hex(12).upper()}"
@@ -134,57 +126,34 @@ class ZenithDatabase:
         key = secrets.token_hex(8)
         encrypted = self._xor_encrypt(code, key)
         cursor = self.conn.cursor()
-        cursor.execute('''
-            INSERT INTO loadstrings (loadstring_id, encrypted_code, access_key)
-            VALUES (?, ?, ?)
-        ''', (loadstring_id, encrypted, access_key))
+        cursor.execute('INSERT INTO loadstrings (loadstring_id, encrypted_code, access_key) VALUES (?, ?, ?)',
+                       (loadstring_id, encrypted, access_key))
         self.conn.commit()
         loadstring_code = f'''-- Zenith Protected Loadstring
 local zenith_data = "{encrypted}"
 local zenith_key = "{key}"
-local function zenith_decrypt(data, key)
-    local result = ""
-    for i = 1, #data do
-        local char_code = string.byte(data, i)
-        local key_char = string.byte(key, (i - 1) % #key + 1)
-        result = result .. string.char(bit32.bxor(char_code, key_char))
-    end
-    return result
+local function zenith_decrypt(data,key)
+ local r=""
+ for i=1,#data do
+  r=r..string.char(bit32.bxor(string.byte(data,i),string.byte(key,(i-1)%#key+1)))
+ end
+ return r
 end
-if _G.ZenithAccessKey == "{access_key}" then
-    local decrypted = zenith_decrypt(zenith_data, zenith_key)
-    return loadstring(decrypted)()
-else
-    error("Zenith: Unauthorized execution attempt")
-    return nil
-end
-'''
-        return {
-            'loadstring_id': loadstring_id,
-            'access_key': access_key,
-            'loadstring_code': loadstring_code,
-            'raw_code': code
-        }
+if _G.ZenithAccessKey=="{access_key}" then
+ local decrypted=zenith_decrypt(zenith_data,zenith_key)
+ return loadstring(decrypted)()
+else error("Zenith: Unauthorized") end'''
+        return {'loadstring_id': loadstring_id,'access_key': access_key,'loadstring_code': loadstring_code,'raw_code': code}
     
     def execute_loadstring(self, loadstring_id, access_key):
         cursor = self.conn.cursor()
-        cursor.execute('SELECT encrypted_code FROM loadstrings WHERE loadstring_id = ?', (loadstring_id,))
+        cursor.execute('SELECT encrypted_code FROM loadstrings WHERE loadstring_id=?',(loadstring_id,))
         result = cursor.fetchone()
-        if not result:
-            return {'success': False, 'error': 'Loadstring not found'}
-        return {
-            'success': True,
-            'message': 'Loadstring ready for execution',
-            'note': 'Set _G.ZenithAccessKey = "YOUR_KEY" before executing'
-        }
-    
-    def _xor_encrypt(self, text, key):
-        result = []
-        for i in range(len(text)):
-            char_code = ord(text[i])
-            key_char = ord(key[i % len(key)])
-            result.append(chr(char_code ^ key_char))
-        return ''.join(result)
+        if not result: return {'success': False, 'error': 'Loadstring not found'}
+        return {'success': True, 'message': 'Loadstring ready for execution','note':'Set _G.ZenithAccessKey="YOUR_KEY"'}
+
+    def _xor_encrypt(self,text,key):
+        return ''.join([chr(ord(text[i])^ord(key[i%len(key)])) for i in range(len(text))])
 
 db = ZenithDatabase()
 
@@ -192,31 +161,27 @@ db = ZenithDatabase()
 class ZenithObfuscator:
     def obfuscate_lua(self, code):
         import re
-        if not code or len(code) < 10:
-            return "-- Zenith Obfuscator: Minimum 10 characters required"
+        if not code or len(code)<10: return "-- Zenith Obfuscator: Minimum 10 characters required"
         string_pattern = r'(["\'])(?:(?=(\\?))\2.)*?\1'
         strings = re.findall(string_pattern, code)
         for full_string in strings:
             string_content = full_string[0]
-            if len(string_content) > 2:
+            if len(string_content)>2:
                 char_codes = [str(ord(c)) for c in string_content]
                 encrypted = f'((function() local t={{ {",".join(char_codes)} }} local s="" for _,c in ipairs(t) do s=s..string.char(c) end return s end)())'
                 code = code.replace(f'"{string_content}"', encrypted).replace(f"'{string_content}'", encrypted)
-        obfuscated = f'''--[[ OBFUSCATED BY ZENITH ]]--
-
-{code}
-
---[[ ZENITH PROTECTION ENABLED ]]--
-return true
-'''
-        return obfuscated
+        return f'--[[ OBFUSCATED BY ZENITH ]]--\n\n{code}\n\n--[[ ZENITH PROTECTION ENABLED ]]--\nreturn true'
 
 obfuscator = ZenithObfuscator()
+
+# ==================== LOAD HTML ====================
+with open("index.html") as f:
+    html_content = f.read()
 
 # ==================== ROUTES ====================
 @app.route('/')
 def index():
-    return render_template('index.html', port=PORT)
+    return render_template_string(html_content, port=PORT)
 
 @app.route('/api/stats')
 def api_stats():
@@ -225,30 +190,24 @@ def api_stats():
 @app.route('/api/generate', methods=['POST'])
 def api_generate():
     data = request.json
-    amount = int(data.get('amount', 1))
-    key_type = data.get('type', 'lifetime')
-    days = int(data.get('days', 30)) if key_type == 'day' else None
-    keys = db.generate_keys(amount, key_type, days)
-    return jsonify({'success': True, 'keys': keys})
+    amount = int(data.get('amount',1))
+    key_type = data.get('type','lifetime')
+    days = int(data.get('days',30)) if key_type=='day' else None
+    keys = db.generate_keys(amount,key_type,days)
+    return jsonify({'success': True,'keys': keys})
 
 @app.route('/api/killswitch/<action>')
 def api_killswitch(action):
-    if action == 'enable':
-        db.toggle_kill_switch(True)
-        return jsonify({'success': True, 'status': 'KILL SWITCH ON'})
-    elif action == 'disable':
-        db.toggle_kill_switch(False)
-        return jsonify({'success': True, 'status': 'SYSTEM ACTIVE'})
-    return jsonify({'error': 'Invalid action'}), 400
+    if action=='enable': db.toggle_kill_switch(True); return jsonify({'success':True,'status':'KILL SWITCH ON'})
+    elif action=='disable': db.toggle_kill_switch(False); return jsonify({'success':True,'status':'SYSTEM ACTIVE'})
+    return jsonify({'error':'Invalid action'}),400
 
 @app.route('/api/export/<format>')
 def api_export(format):
-    if format not in ['txt', 'json', 'csv']:
-        return jsonify({'error': 'Invalid format'}), 400
+    if format not in ['txt','json','csv']: return jsonify({'error':'Invalid format'}),400
     content = db.export_keys(format)
     filename = f'zenith_keys_{datetime.now().strftime("%Y%m%d")}.{format}'
-    with open(filename, 'w') as f:
-        f.write(content)
+    with open(filename,'w') as f: f.write(content)
     return send_file(filename, as_attachment=True)
 
 @app.route('/api/check/<key>')
@@ -257,39 +216,26 @@ def api_check(key):
 
 @app.route('/api/obfuscate', methods=['POST'])
 def api_obfuscate():
-    code = request.json.get('code', '')
-    if not code:
-        return jsonify({'error': 'No code provided'}), 400
-    return jsonify({'success': True, 'obfuscated': obfuscator.obfuscate_lua(code)})
+    data = request.json
+    code = data.get('code','')
+    if not code: return jsonify({'error':'No code provided'}),400
+    return jsonify({'success':True,'obfuscated':obfuscator.obfuscate_lua(code)})
 
 @app.route('/api/loadstring/create', methods=['POST'])
 def api_loadstring_create():
-    code = request.json.get('code', '')
-    if not code:
-        return jsonify({'error': 'No code provided'}), 400
+    data = request.json
+    code = data.get('code','')
+    if not code: return jsonify({'error':'No code provided'}),400
     result = db.create_loadstring(code)
-    return jsonify({
-        'success': True,
-        'loadstring_id': result['loadstring_id'],
-        'access_key': result['access_key'],
-        'loadstring_code': result['loadstring_code'],
-        'note': 'Save the access_key! It is required for execution.'
-    })
+    return jsonify({'success':True,'loadstring_id':result['loadstring_id'],'access_key':result['access_key'],'loadstring_code':result['loadstring_code'],'note':'Save access_key! Required for execution.'})
 
 @app.route('/api/loadstring/execute/<loadstring_id>', methods=['POST'])
 def api_loadstring_execute(loadstring_id):
-    access_key = request.json.get('access_key', '')
-    if not access_key:
-        return jsonify({'error': 'Access key required'}), 400
+    data = request.json
+    access_key = data.get('access_key','')
+    if not access_key: return jsonify({'error':'Access key required'}),400
     return jsonify(db.execute_loadstring(loadstring_id, access_key))
 
-if __name__ == '__main__':
-    print(f"""
-╔══════════════════════════════════════════╗
-║             ZENITH KEY SYSTEM            ║
-║         with Loadstring Protection       ║
-║             Port: {PORT}                 ║
-║        http://localhost:{PORT}           ║
-╚══════════════════════════════════════════╝
-""")
+if __name__=='__main__':
+    print(f"Zenith Key System running on port {PORT}")
     app.run(host='0.0.0.0', port=PORT, debug=False)
